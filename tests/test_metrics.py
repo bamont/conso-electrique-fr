@@ -3,6 +3,7 @@ import pandas as pd
 
 from conso.metrics import mase_scale, metrics
 
+
 def test_metrics_values():
     y = pd.Series([100.0, 200.0, 300.0])
     p = pd.Series([110.0, 190.0, np.nan])
