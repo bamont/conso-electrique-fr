@@ -1,0 +1,36 @@
+# Lance l'API (port 8000) et le tableau de bord (port 8501) :   docker compose up --build
+#
+# Prérequis : models/prod (notebook 04 ou `python -m conso.train`) et le dossier data/ générés par les notebooks.
+# Le dossier data/ est monté en lecture seule : le rejeu (API) et la page « Performance » (dashboard) en ont besoin.
+# Le mode « Demain (live) » n'a besoin que d'Internet.
+
+services:
+  api:
+    build: .
+    image: conso-api
+    ports:
+      - "8000:8000"
+    environment:
+      CONSO_MODEL: /app/models/prod
+      CONSO_DATASET: /app/data/processed/dataset_30min.parquet
+      CONSO_METEO_FC: /app/data/raw/meteo_forecast_openmeteo.parquet
+    volumes:
+      - ./data:/app/data:ro
+      - ./models:/app/models:ro
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    image: conso-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      CONSO_API_URL: http://api:8000
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
