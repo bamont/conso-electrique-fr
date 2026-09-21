@@ -30,7 +30,8 @@ dev = [
     "ipykernel (>=7.3.0,<8.0.0)",
     "pytest (>=9.1.1,<10.0.0)",
     "ruff (>=0.16.8,<0.17.0)",
-    "httpx (>=0.28.1,<0.29.0)"
+    "httpx (>=0.28.1,<0.29.0)",
+    "fastapi (>=0.141.1,<0.142.0)"
 ]
 notebooks = [
     "matplotlib (>=3.11.2,<4.0.0)",
@@ -42,6 +43,9 @@ notebooks = [
 
 [tool.poetry]
 packages = [{ include = "conso", from = "src" }]
+
+[tool.poetry.group.notebooks]
+optional = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
