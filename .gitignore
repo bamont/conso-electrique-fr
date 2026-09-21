@@ -10,4 +10,6 @@ data/processed/
 models/
 
 # figures : garder celles du README uniquement (les retirer de cette liste pour les versionner)
-reports/figures/
+reports/figures/*
+!reports/figures/dashboard_*.png
+!reports/figures/0[1-4]_*.png
