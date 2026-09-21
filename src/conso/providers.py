@@ -15,13 +15,13 @@ from .calendars import attach_calendar
 from .config import HISTORY_DAYS, ODRE_EXPORT, ODRE_PARAMS, TZ, WCOLS
 from .data import load_dataset, load_national_forecast
 from .features import REQUIRED_COLUMNS
-from .timeutils import day_bounds
+from .timeutils import day_bounds, local_days
 from .weather import apply_hourly_bias, fetch_national_forecast, national_30min
 
 
 @dataclass
 class Inputs:
-    """Entrées d'une prévision : historique, météo prévue brute, et réel et prévision RTE."""
+    """Entrées d'une prévision : historique, météo prévue brute, et (en rejeu) réel et prévision RTE."""
 
     d: pd.DataFrame
     wt_raw: pd.DataFrame
@@ -39,6 +39,16 @@ class ReplayProvider:
     def from_files(cls, dataset_path: str | Path, meteo_fc_path: str | Path) -> ReplayProvider:
         df = load_dataset(dataset_path)
         return cls(df, load_national_forecast(meteo_fc_path, df.index))
+
+    def available_range(self) -> tuple[pd.Timestamp, pd.Timestamp]:
+        """Premier et dernier jour rejouables : consommation et météo prévue présentes, et assez d'historique."""
+        ok = (self.df["conso"].notna() & self.wt_fc["temp_nat"].notna()).to_numpy()
+        per_day = pd.Series(1, index=local_days(self.df.index[ok])).groupby(level=0).sum()
+        full = per_day[per_day >= 46].index # jours complets (46 à 50 demi-heures)
+        if len(full) == 0:
+            raise LookupError("Aucun jour rejouable dans le jeu de données.")
+        first_history = local_days(self.df.index[:1])[0]
+        return max(full.min(), first_history + pd.Timedelta(days=HISTORY_DAYS)), full.max()
 
     def get_inputs(self, target_date, bias: pd.Series | None = None) -> Inputs:
         start, end = day_bounds(target_date)

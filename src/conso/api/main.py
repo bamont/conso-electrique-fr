@@ -64,6 +64,17 @@ def create_app(bundle: Bundle | None = None, replay: ReplayProvider | None = Non
         return {**meta, "n_features": len(bundle.feats), "bias_hourly_c": {int(h): round(float(v), 3) for h, v in bundle.bias.items()},
                 "interval_widening_mw": {k: round(v) for k, v in bundle.qhat.items()}}
 
+    @app.get("/replay/range")
+    def replay_range() -> dict:
+        """Premier et dernier jour que le mode `replay` peut rejouer."""
+        if replay is None:
+            raise HTTPException(503, "Rejeu indisponible (variables CONSO_DATASET et CONSO_METEO_FC).")
+        try:
+            lo, hi = replay.available_range()
+        except LookupError as e:
+            raise HTTPException(404, str(e)) from e
+        return {"min_date": str(lo.date()), "max_date": str(hi.date())}
+    
     @app.get("/forecast", response_model=ForecastResponse)
     def forecast(
         date: str = Query(..., description="Jour à prévoir, AAAA-MM-JJ (heure locale)", pattern=r"^\d{4}-\d{2}-\d{2}$"),
