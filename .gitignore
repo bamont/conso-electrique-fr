@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+
+# données et modèles : régénérés par les notebooks / `python -m conso.train`
+data/raw/
+data/processed/
+models/
+
+# figures : garder celles du README uniquement (les retirer de cette liste pour les versionner)
+reports/figures/
