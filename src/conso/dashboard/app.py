@@ -14,12 +14,15 @@ import streamlit as st
 
 from conso.config import ISSUE_HOUR, TZ
 from conso.dashboard import charts, client, performance
+from conso.journal import JOURNAL_COLUMNS, load_journal
+from conso.journal import summary as journal_summary
 
 st.set_page_config(page_title="Consommation électrique : prévision J+1", page_icon="⚡", layout="wide")
 
 DATASET = os.environ.get("CONSO_DATASET", "data/processed/dataset_30min.parquet")
 BACKTEST = os.environ.get("CONSO_BACKTEST", "data/processed/production_backtest_predictions.parquet")
-PAGES = ["Demain (live)", "Rejouer un jour", "Performance", "Modèle"]
+JOURNAL_DIR = os.environ.get("CONSO_JOURNAL", "journal")
+PAGES = ["Demain (live)", "Rejouer un jour", "Performance", "Journal", "Modèle"]
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
@@ -37,6 +40,11 @@ def cached_model() -> dict:
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_range() -> dict:
     return client.get_json("/replay/range", timeout=30)
+
+
+@st.cache_data(ttl=1800, show_spinner="Chargement du journal…")
+def cached_journal(journal_dir: str):
+    return load_journal(journal_dir)
 
 
 @st.cache_data(show_spinner="Chargement des performances…")
@@ -181,6 +189,52 @@ def page_performance() -> None:
     )
 
 
+def page_journal() -> None:
+    st.header("Journal des prévisions réelles")
+    st.caption("Chaque jour, la prévision du lendemain est enregistrée **avant** de connaître le résultat "
+               "(tâche planifiée `journal-record.yml`), puis complétée avec le réel et la prévision RTE J-1 "
+               "une fois connus (`journal-reconcile.yml`). C'est la seule validation qui ne peut pas être "
+               "ajustée après coup.")
+    df = cached_journal(JOURNAL_DIR)
+    if df.empty:
+        st.info(f"Journal vide ou introuvable (`{JOURNAL_DIR}`). Il se remplit tout seul une fois les tâches "
+                "planifiées actives ; voir `.github/workflows/journal-*.yml`.")
+        return
+
+    done = df.dropna(subset=["actual_mw"])
+    n_days, n_done_days = df["date"].nunique(), done["date"].nunique()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Jours enregistrés", n_days)
+    c2.metric("Jours avec le réel connu", n_done_days)
+    c3.metric("Période", f"{df['date'].min()} → {df['date'].max()}")
+
+    s = journal_summary(df)
+    if s.empty:
+        st.info("Aucun jour encore complété par la tâche de rapprochement (`reconcile`).")
+        return
+    fmt = {"MAE": "{:,.0f}", "RMSE": "{:,.0f}", "MAPE %": "{:.2f}", "biais": "{:+,.0f}",
+          "n": "{:.0f}", "couverture intervalle %": "{:.1f}"}
+    st.dataframe(s.style.format({k: v for k, v in fmt.items() if k in s.columns}))
+    if "RTE J-1" in s.index:
+        delta = s.loc["Modèle (journal, en direct)", "MAE"] / s.loc["RTE J-1", "MAE"] - 1
+        st.caption(f"MAE du modèle en direct : {delta:+.0%} par rapport à RTE J-1 sur les jours déjà complétés "
+                   "(échantillon encore petit : à lire avec prudence tant que le journal est jeune).")
+
+    daily = done.assign(err_model=(done["forecast_mw"] - done["actual_mw"]).abs(),
+                        err_rte=(done["rte_j1_mw"] - done["actual_mw"]).abs()).groupby("date")
+    mae_day = daily[["err_model", "err_rte"]].mean().rename(
+        columns={"err_model": "Modèle (en direct)", "err_rte": "RTE J-1"})
+    st.plotly_chart(charts.lines_figure(mae_day, "MAE par jour", "MW",
+                                        {"Modèle (en direct)": charts.BLUE, "RTE J-1": charts.RED}))
+
+    with st.expander("Voir et télécharger le journal complet"):
+        table = df.copy()
+        table["time"] = table["time"].dt.tz_convert("Europe/Paris").dt.strftime("%Y-%m-%d %H:%M")
+        st.dataframe(table[JOURNAL_COLUMNS])
+        st.download_button("Télécharger en CSV", table.to_csv(index=False).encode("utf-8"),
+                           file_name="journal.csv", mime="text/csv")
+
+
 def page_model() -> None:
     st.header("Modèle en production")
     try:
@@ -220,7 +274,8 @@ def sidebar() -> str:
 
 def main() -> None:
     page = sidebar()
-    {"Demain (live)": page_live, "Rejouer un jour": page_replay, "Performance": page_performance, "Modèle": page_model}[page]()
+    {"Demain (live)": page_live, "Rejouer un jour": page_replay, "Performance": page_performance,
+        "Journal": page_journal, "Modèle": page_model}[page]()
 
 
 main()

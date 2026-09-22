@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,8 +76,11 @@ def _norm_col(c) -> str:
     return re.sub(r"[^a-z0-9]+", "_", c).strip("_")
 
 
-def parse_rte_export(text: str) -> pd.Series:
-    """Consommation au pas de 30 min (index UTC) à partir d'un export CSV éCO2mix temps réel."""
+RTE_COLUMNS = ["consommation", "prevision_j1", "prevision_j"]
+
+
+def parse_rte_frame(text: str) -> pd.DataFrame:
+    """Export CSV éCO2mix temps réel -> consommation et prévisions RTE J-1 / J au pas de 30 min (index UTC)."""
     df = pd.read_csv(io.StringIO(text), sep=";")
     if df.shape[1] == 1:
         df = pd.read_csv(io.StringIO(text), sep=",")
@@ -88,22 +92,45 @@ def parse_rte_export(text: str) -> pd.Series:
         if m.any():
             df = df[m]
     df["date_heure"] = pd.to_datetime(df["date_heure"], utc=True)
-    df["consommation"] = pd.to_numeric(df["consommation"], errors="coerce")
-    s = df.dropna(subset=["consommation"]).set_index("date_heure")["consommation"].sort_index()
-    s = s[~s.index.duplicated(keep="first")]
-    return s[s.index.minute % 30 == 0]
+    for c in RTE_COLUMNS:
+        df[c] = pd.to_numeric(df[c], errors="coerce") if c in df.columns else float("nan")
+    out = df.set_index("date_heure")[RTE_COLUMNS].sort_index()
+    out = out[~out.index.duplicated(keep="first")]
+    return out[out.index.minute % 30 == 0]
+
+
+def parse_rte_export(text: str) -> pd.Series:
+    """Consommation au pas de 30 min (index UTC) à partir d'un export CSV éCO2mix temps réel."""
+    return parse_rte_frame(text)["consommation"].dropna()
 
 
 class LiveProvider:
     """Historique de consommation RTE (temps réel) + météo prévue Open-Meteo, en direct."""
 
-    def __init__(self, session=None):
+    def __init__(self, session=None, cache_seconds: float = 600):
         self.session = session or requests
+        self.cache_seconds = cache_seconds
+        self._rte_cache: tuple[float, pd.DataFrame] | None = None
 
-    def fetch_consumption(self) -> pd.Series:
+    def fetch_rte_frame(self) -> pd.DataFrame:
+        """Consommation et prévisions RTE J-1 / J (temps réel). Mis en cache quelques minutes."""
+        if self._rte_cache and time.monotonic() - self._rte_cache[0] < self.cache_seconds:
+            return self._rte_cache[1]
         r = self.session.get(ODRE_EXPORT.format("eco2mix-national-tr"), params=ODRE_PARAMS, timeout=300)
         r.raise_for_status()
-        return parse_rte_export(r.text)
+        frame = parse_rte_frame(r.text)
+        self._rte_cache = (time.monotonic(), frame)
+        return frame
+
+    def fetch_consumption(self) -> pd.Series:
+        return self.fetch_rte_frame()["consommation"].dropna()
+
+    def fetch_temperature_analysis(self, since) -> pd.Series:
+        """Température nationale (pas de 30 min, UTC) la plus récente du produit de prévision, depuis ``since``."""
+        today = pd.Timestamp.now(tz=TZ).tz_localize(None).normalize()
+        past = (today - pd.Timestamp(since).normalize()).days + 2
+        nat = fetch_national_forecast(past_days=min(past, 92), forecast_days=1, session=self.session)
+        return nat["temp_nat"].resample("30min").interpolate(method="time")
 
     def get_inputs(self, target_date, bias: pd.Series | None = None) -> Inputs:
         start, end = day_bounds(target_date)

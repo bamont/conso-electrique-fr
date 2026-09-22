@@ -123,6 +123,25 @@ docker compose up --build            # API sur :8000, tableau de bord sur :8501
 
 Le tableau de bord est testé sans navigateur avec le moteur de test de Streamlit, branché sur la vraie API (`tests/test_dashboard.py`).
 
+## Journal des prévisions réelles
+
+Chaque jour, une tâche planifiée enregistre la prévision du lendemain **avant** de connaître le résultat
+(`.github/workflows/journal-record.yml`), puis une seconde la complète avec le réel et la prévision RTE J-1
+une fois connus (`journal-reconcile.yml`). C'est la seule validation du projet qui ne peut pas être ajustée
+après coup : contrairement à un backtest, la prévision est écrite avant que le réel n'existe.
+
+- **Stockage :** `journal/forecasts_AAAA-MM.parquet`, un fichier par mois, versionné dans le dépôt.
+- **Horaires :** enregistrement à 09:15 UTC (toujours ≥ 10 h heure de Paris, hiver comme été) ; rapprochement à 05:00 UTC.
+- **Consultation :** page « Journal » du dashboard, ou en ligne de commande :
+  ```powershell
+  poetry run python -m conso.journal summary
+  ```
+- **Modèle :** ces tâches ont besoin de `models/prod`, versionné dans le dépôt (~10 Mo) pour cette raison — voir `.gitignore`.
+
+Le journal est encore jeune : ses chiffres deviennent significatifs après plusieurs semaines de collecte. Il donne
+la seule mesure du **coût réel** de la météo prévue, que le backtest (notebook 04) sous-estime en s'appuyant sur
+un historique de prévisions à courte échéance.
+
 ## Reproduire
 
 Prérequis : Python 3.12 ou plus, [Poetry](https://python-poetry.org/).

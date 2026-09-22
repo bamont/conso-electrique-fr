@@ -1,0 +1,58 @@
+# Enregistre chaque jour, en direct, la prévision faite pour le lendemain.
+#
+# C'est la seule validation qui ne peut pas être ajustée après coup : la prévision est écrite dans
+# le journal (journal/) avant que le réel ne soit connu. Complété ensuite par journal-reconcile.yml.
+#
+# Horaire : 09:15 UTC tous les jours. Toujours ≥ 10 h heure de Paris (10:15 en hiver, 11:15 en été) :
+# la prévision utilise ISSUE_HOUR = 10 h locale en interne, donc ce déclenchement fixe en UTC ne la
+# lance jamais trop tôt, seulement parfois un peu plus tard l'été. `cron` ne gère pas le changement
+# d'heure ; c'est le compromis le plus simple.
+name: Journal — enregistrer la prévision du lendemain
+
+on:
+  schedule:
+    - cron: "15 9 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Jour à prévoir (AAAA-MM-JJ) ; par défaut, demain"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: conso-journal
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Poetry
+        run: pipx install poetry
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: poetry
+
+      - name: Installer les dépendances (groupe principal uniquement)
+        run: poetry install --no-interaction --only main
+
+      - name: Enregistrer la prévision
+        env:
+          CONSO_MODEL: models/prod
+        run: |
+          poetry run python -m conso.journal record ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}
+
+      - name: Committer le journal mis à jour
+        run: |
+          git config user.name "conso-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add journal/
+          git diff --cached --quiet && echo "Rien de nouveau." || git commit -m "journal: prévision enregistrée ($(date -u +%F))"
+          git pull --rebase origin main
+          git push

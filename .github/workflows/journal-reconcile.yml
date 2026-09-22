@@ -1,0 +1,48 @@
+# Complète les entrées récentes du journal avec le réel et la prévision RTE J-1, une fois connus.
+#
+# Horaire : 05:00 UTC (6 h/7 h heure de Paris), après que RTE a mis à jour l'export temps réel de la nuit.
+name: Journal — compléter le réel et RTE J-1
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: conso-journal
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Poetry
+        run: pipx install poetry
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: poetry
+
+      - name: Installer les dépendances (groupe principal uniquement)
+        run: poetry install --no-interaction --only main
+
+      - name: Compléter le journal
+        run: poetry run python -m conso.journal reconcile
+
+      - name: Afficher les métriques cumulées
+        run: poetry run python -m conso.journal summary
+
+      - name: Committer le journal mis à jour
+        run: |
+          git config user.name "conso-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add journal/
+          git diff --cached --quiet && echo "Rien de nouveau." || git commit -m "journal: réel et RTE J-1 complétés ($(date -u +%F))"
+          git pull --rebase origin main
+          git push

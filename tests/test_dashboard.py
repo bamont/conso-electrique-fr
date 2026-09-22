@@ -20,6 +20,7 @@ from conso.providers import ReplayProvider  # noqa: E402
 APP = str(Path(__file__).parents[1] / "src" / "conso" / "dashboard" / "app.py")
 
 
+# Fonctions pures
 def _points(n=48, with_reference=True):
     idx = pd.date_range("2025-01-15", periods=n, freq="30min", tz="Europe/Paris")
     base = 60000 + 5000 * np.sin(np.arange(n) / 8)
@@ -105,7 +106,7 @@ def test_forecast_frame_is_local_time():
     payload = {"points": [{"time": "2024-03-31T01:30:00+01:00", "forecast_mw": 1.0, "lower_mw": 0.0, "upper_mw": 2.0},
                           {"time": "2024-03-31T03:00:00+02:00", "forecast_mw": 1.0, "lower_mw": 0.0, "upper_mw": 2.0}]}
     df = client.forecast_frame(payload)
-    assert str(df.index.tz) == "Europe/Paris" and df.index[1] - df.index[0] == pd.Timedelta("30min") # saut d'heure d'été
+    assert str(df.index.tz) == "Europe/Paris" and df.index[1] - df.index[0] == pd.Timedelta("30min")   # saut d'heure d'été
 
 
 # Pages Streamlit branchées sur la vraie API
@@ -187,6 +188,59 @@ def test_performance_page(wired, perf_data, tmp_path):
     at.sidebar.radio[0].set_value("Performance").run()
     assert not at.exception, [e.value for e in at.exception]
     assert len(at.metric) == 3 and len(at.dataframe) == 1 and len(at.get("plotly_chart")) == 4
+
+
+def test_journal_page_empty(wired, tmp_path):
+    wired.setenv("CONSO_JOURNAL", str(tmp_path / "absent"))
+    at = _run()
+    at.sidebar.radio[0].set_value("Journal").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Journal vide" in i.value for i in at.info)
+
+
+def _fake_journal(tmp_path, n_done_days=3, n_pending_days=1):
+    from conso import journal
+
+    idx_all = pd.date_range("2024-03-01", periods=48 * (n_done_days + n_pending_days), freq="30min", tz="UTC")
+    rows = []
+    for i, day_start in enumerate(range(0, len(idx_all), 48)):
+        chunk = idx_all[day_start:day_start + 48]
+        date = str(chunk[0].tz_convert("Europe/Paris").date())
+        base = 50000 + i * 200
+        known = i < n_done_days
+        rows.append(pd.DataFrame({
+            "date": date, "time": chunk, "forecast_mw": base, "lower_mw": base - 2000, "upper_mw": base + 2000,
+            "actual_mw": base + 300 if known else np.nan, "rte_j1_mw": base - 500 if known else np.nan,
+            "model_version": "test", "recorded_at": pd.Timestamp.now(tz="UTC"),
+        }))
+    df = pd.concat(rows, ignore_index=True)
+    out = tmp_path / "journal"
+    journal._upsert = getattr(journal, "_upsert", None)
+    for month, chunk in df.groupby(pd.to_datetime(df["time"]).dt.tz_localize(None).dt.to_period("M")):
+        journal._save_month(out, month, chunk)
+    return out
+
+
+def test_journal_page_with_data(wired, tmp_path):
+    out = _fake_journal(tmp_path)
+    wired.setenv("CONSO_JOURNAL", str(out))
+    at = _run()
+    at.sidebar.radio[0].set_value("Journal").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.metric[0].value == "4"                      # 4 jours enregistrés au total
+    assert at.metric[1].value == "3"                      # dont 3 avec le réel connu
+    assert len(at.dataframe) == 2                         # le tableau des métriques + le journal détaillé (dans l'expander)
+    assert at.get("plotly_chart")
+    assert any("RTE J-1" in c.value for c in at.caption)
+
+
+def test_journal_page_no_reconciled_day(wired, tmp_path):
+    out = _fake_journal(tmp_path, n_done_days=0, n_pending_days=2)
+    wired.setenv("CONSO_JOURNAL", str(out))
+    at = _run()
+    at.sidebar.radio[0].set_value("Journal").run()
+    assert not at.exception
+    assert any("aucun jour encore complété".lower() in i.value.lower() for i in at.info)
 
 
 def test_performance_page_without_files(wired, tmp_path):

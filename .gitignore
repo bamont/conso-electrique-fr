@@ -1,13 +1,20 @@
 .venv/
 __pycache__/
+*.pyc
 .ipynb_checkpoints/
 .pytest_cache/
 .ruff_cache/
+.vscode/
+.idea/
+.DS_Store
 
 # données et modèles : régénérés par les notebooks / `python -m conso.train`
-data/raw/
-data/processed/
-models/
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+models/*
+!models/prod/
 
 # figures : garder celles du README uniquement (les retirer de cette liste pour les versionner)
 reports/figures/*
