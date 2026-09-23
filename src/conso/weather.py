@@ -59,7 +59,8 @@ def fetch_openmeteo(
     variables: list[str] | None = None, past_days: int | None = None, forecast_days: int | None = None,
     session=None, max_retry: int = 6,
 ) -> pd.DataFrame:
-    """Télécharge des données horaires Open-Meteo (UTC). Gère la limite de débit (HTTP 429)."""
+    """Télécharge des données horaires Open-Meteo (UTC). Réessaie sur limite de débit (429) ou incident réseau
+    transitoire (timeout, coupure de connexion) : ces derniers sont fréquents et sans rapport avec les données."""
     variables = variables or HOURLY
     params = {"latitude": lat, "longitude": lon, "hourly": ",".join(variables), "timezone": "UTC"}
     if start and end:
@@ -69,8 +70,14 @@ def fetch_openmeteo(
     if forecast_days is not None:
         params["forecast_days"] = forecast_days
     get = (session or requests).get
+    last_error: Exception | None = None
     for attempt in range(max_retry):
-        r = get(url, params=params, timeout=90)
+        try:
+            r = get(url, params=params, timeout=90)
+        except requests.exceptions.RequestException as e:      # timeout, DNS, connexion coupée...
+            last_error = e
+            time.sleep(10 * (attempt + 1))
+            continue
         if r.status_code == 200:
             df = pd.DataFrame(r.json()["hourly"])
             df["time"] = pd.to_datetime(df["time"], utc=True)
@@ -79,7 +86,7 @@ def fetch_openmeteo(
             time.sleep(30 * (attempt + 1))
             continue
         r.raise_for_status()
-    raise RuntimeError("Open-Meteo : trop de tentatives (limite de débit ?).")
+    raise RuntimeError(f"Open-Meteo : trop de tentatives (limite de débit, ou {last_error!r}).")
 
 
 def fetch_national_forecast(past_days: int = 45, forecast_days: int = 3, session=None) -> pd.DataFrame:
