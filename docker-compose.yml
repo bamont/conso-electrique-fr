@@ -2,6 +2,9 @@
 #
 # Prérequis : models/prod (notebook 04 ou `python -m conso.train`) et le dossier data/ générés par les notebooks.
 # Le dossier data/ est monté en lecture seule : le rejeu (API) et la page « Performance » (dashboard) en ont besoin.
+# journal/ est monté en lecture seule pour la page « Journal » (alimenté par les tâches planifiées, voir
+# .github/workflows/journal-*.yml) ; après une nouvelle exécution de ces tâches, fais `git pull` puis relance
+# le conteneur (`docker compose restart dashboard`) pour voir les nouvelles entrées.
 # Le mode « Demain (live) » n'a besoin que d'Internet.
 
 services:
@@ -16,7 +19,7 @@ services:
       CONSO_METEO_FC: /app/data/raw/meteo_forecast_openmeteo.parquet
     volumes:
       - ./data:/app/data:ro
-      - ./models:/app/models:ro
+      - ./models:/app/models:ro 
     restart: unless-stopped
 
   dashboard:
@@ -28,8 +31,10 @@ services:
       - "8501:8501"
     environment:
       CONSO_API_URL: http://api:8000
+      CONSO_JOURNAL: /app/journal
     volumes:
       - ./data:/app/data:ro
+      - ./journal:/app/journal:ro
     depends_on:
       api:
         condition: service_healthy
