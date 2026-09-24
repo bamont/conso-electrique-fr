@@ -1,0 +1,46 @@
+{
+  "profil": "standard",
+  "periode_selection": [
+    "2018-01-01",
+    "2025-01-01"
+  ],
+  "arbres": 300,
+  "blocs_retenus": [
+    "dyn",
+    "astro",
+    "cal",
+    "nowcast",
+    "spatial_hdd",
+    "spatial_villes"
+  ],
+  "blocs_recommandes": [
+    "dyn",
+    "nowcast"
+  ],
+  "variables_recommandees": [
+    "dtemp_24h",
+    "dtemp_48h",
+    "dTj_1j",
+    "dTj_3j",
+    "te_lent",
+    "te_moyen",
+    "te_rapide",
+    "dT_te_lent",
+    "tmin_3j",
+    "serie_froid_0",
+    "serie_froid_5",
+    "y_last_rel",
+    "pente_matin_dev",
+    "dev_recent_3h",
+    "dev_matin_j1",
+    "dtemp_matin"
+  ],
+  "bruit_de_graine_pct": {
+    "oracle|global": 1.5807768911987436,
+    "oracle|froid": 3.2221833365422383,
+    "oracle|grand_froid": 0.5103340738201554,
+    "fc_debiased|global": 0.648094541124857,
+    "fc_debiased|froid": 3.661219582937635,
+    "fc_debiased|grand_froid": 5.513107110037438
+  }
+}
