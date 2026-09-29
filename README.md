@@ -203,7 +203,7 @@ docker run --rm -p 8000:8000 -v ${PWD}/data:/app/data `
 
 Si `models/prod` est un mélange, ajouter `--build-arg MODEL_GROUPS=main,models-alt` à la commande `docker build` ci-dessus.
 
-Les données ne sont pas versionnées : voir [`data/README.md`](data/README.md). Avant de committer des notebooks exécutés, lancer `python tools/scrub_notebooks.py` (anonymise les chemins personnels des sorties ; `--check` pour vérifier seulement).
+Les données ne sont pas versionnées. Avant de committer des notebooks exécutés, lancer `python tools/scrub_notebooks.py` (anonymise les chemins personnels des sorties ; `--check` pour vérifier seulement).
 
 ## Limites
 
