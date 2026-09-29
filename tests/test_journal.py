@@ -27,8 +27,6 @@ class FakeSession:
     """Simule l'export RTE (consommation + prévisions J-1/J) et les prévisions météo Open-Meteo."""
 
     def __init__(self, now: pd.Timestamp, bias_rte: float = 300.0, span_days: int = 75):
-        # aligné sur 15 min : un pas de 15 min conserve alors {0, 15, 30, 45}, dont les demi-heures gardées
-        # par `parse_rte_frame` (minute % 30 == 0), quel que soit l'instant réel où le test tourne.
         self.now, self.bias_rte, self.span_days = now.floor("15min"), bias_rte, span_days
 
     def _consumption(self, t: pd.Timestamp) -> float:
@@ -42,12 +40,11 @@ class FakeSession:
             known_until = self.now.tz_convert(TZ).normalize() + pd.Timedelta(days=1)
             for t in idx:
                 c = self._consumption(t)
-                measured = f"{c:.1f}" if t <= self.now else ""          # le réel n'existe pas encore dans le futur
+                measured = f"{c:.1f}" if t <= self.now else "" # le réel n'existe pas encore dans le futur
                 p1 = f"{c - self.bias_rte:.1f}" if t.tz_convert(TZ).normalize() <= known_until else ""
                 rows.append(f"France;Données temps réel;{t.strftime('%Y-%m-%dT%H:%M:%S+00:00')};{measured};{p1};{measured}")
             return FakeResponse(text="\n".join(rows))
-        # Fenêtre météo généreuse et indépendante de l'horloge réelle de la machine (le code interrogé calcule
-        # `forecast_days` à partir de `pd.Timestamp.now()` réel, hors de portée de `self.now` en test).
+        # Fenêtre météo généreuse et indépendante de l'horloge réelle de la machine
         idx = pd.date_range((self.now - pd.Timedelta(days=self.span_days)).floor("D"), (self.now + pd.Timedelta(days=16)).ceil("D"), freq="h")
         h = {"time": [t.strftime("%Y-%m-%dT%H:%M") for t in idx]}
         for v, val in zip(params["hourly"].split(","), [10.0, 70.0, 10.0, 50.0, 100.0], strict=True):
@@ -80,16 +77,16 @@ def test_record_day_writes_month_file(tmp_path, trained, provider):
 
 def test_record_day_is_idempotent_and_preserves_reconciled_data(tmp_path, trained, provider, fixed_now):
     bundle, _ = trained
-    journal.record_day(bundle, provider, "2024-03-19", tmp_path)      # jour partiellement écoulé (now = 13 h)
+    journal.record_day(bundle, provider, "2024-03-19", tmp_path) # jour partiellement écoulé (now = 13 h)
     journal.reconcile(provider, tmp_path, lookback_days=5, now=fixed_now)
     before = journal.load_journal(tmp_path)
-    assert before["actual_mw"].notna().any()          # au moins le passé récent du jour est déjà connu
-    assert before["actual_mw"].isna().any()            # mais pas la fin de journée, pas encore écoulée
+    assert before["actual_mw"].notna().any() # au moins le passé récent du jour est déjà connu
+    assert before["actual_mw"].isna().any() # mais pas la fin de journée, pas encore écoulée
 
-    journal.record_day(bundle, provider, "2024-03-19", tmp_path)   # nouvel enregistrement du même jour
+    journal.record_day(bundle, provider, "2024-03-19", tmp_path) # nouvel enregistrement du même jour
     after = journal.load_journal(tmp_path)
-    assert len(after) == 48                                          # pas de doublon
-    pd.testing.assert_series_equal(before["actual_mw"], after["actual_mw"])   # le réel déjà connu n'est pas effacé
+    assert len(after) == 48 # pas de doublon
+    pd.testing.assert_series_equal(before["actual_mw"], after["actual_mw"]) # le réel déjà connu n'est pas effacé
 
 
 def test_reconcile_fills_actual_and_rte(tmp_path, trained, provider, fixed_now):
@@ -99,30 +96,30 @@ def test_reconcile_fills_actual_and_rte(tmp_path, trained, provider, fixed_now):
     assert r["months_updated"] == ["2024-03"] and r["rows_filled_actual"] == 48 and r["rows_filled_rte"] == 48
 
     df = journal.load_journal(tmp_path)
-    expected = 50000 + 5000 * np.sin(df["time"].dt.hour / 24 * 6.28)     # formule de FakeSession : heure UTC
+    expected = 50000 + 5000 * np.sin(df["time"].dt.hour / 24 * 6.28) # formule de FakeSession : heure UTC
     np.testing.assert_allclose(df["actual_mw"].to_numpy(), expected.to_numpy(), atol=1.0)
     np.testing.assert_allclose(df["rte_j1_mw"].to_numpy(), (expected - 300.0).to_numpy(), atol=1.0)
 
     again = journal.reconcile(provider, tmp_path, lookback_days=5, now=fixed_now)
-    assert again["rows_filled_actual"] == 0 and again["rows_filled_rte"] == 0     # déjà complet : rien à refaire
+    assert again["rows_filled_actual"] == 0 and again["rows_filled_rte"] == 0 # déjà complet
 
 
 def test_reconcile_only_fills_known_rte_forecast(tmp_path, trained, provider, fixed_now):
     """La prévision RTE J-1 d'un jour encore loin dans le futur n'est pas encore publiée : elle reste NaN."""
     bundle, _ = trained
-    journal.record_day(bundle, provider, "2024-03-21", tmp_path)   # jour D+2 : pas encore publié dans le FakeSession
+    journal.record_day(bundle, provider, "2024-03-21", tmp_path) # jour D+2 : pas encore publié dans le FakeSession
     journal.reconcile(provider, tmp_path, lookback_days=10, now=fixed_now)
     df = journal.load_journal(tmp_path)
-    assert df["rte_j1_mw"].isna().all() and df["actual_mw"].isna().all()   # jour futur : ni réel ni prévision RTE
+    assert df["rte_j1_mw"].isna().all() and df["actual_mw"].isna().all() # jour futur : ni réel ni prévision RTE
 
 
 def test_reconcile_respects_lookback(tmp_path, trained, fixed_now):
     bundle, _ = trained
     old_provider = LiveProvider(session=FakeSession(fixed_now, span_days=90))
-    journal.record_day(bundle, old_provider, "2024-02-15", tmp_path)   # mois différent de celui du lookback
+    journal.record_day(bundle, old_provider, "2024-02-15", tmp_path) # mois différent de celui du lookback
     journal.reconcile(old_provider, tmp_path, lookback_days=5, now=fixed_now)
     df = journal.load_journal(tmp_path)
-    assert df["actual_mw"].isna().all()                                # février non parcouru (lookback = mars)
+    assert df["actual_mw"].isna().all()
 
 
 def test_summary_metrics():
@@ -135,7 +132,7 @@ def test_summary_metrics():
     })
     s = journal.summary(df)
     assert set(s.index) == {"Modèle (journal, en direct)", "RTE J-1"}
-    assert s.loc["Modèle (journal, en direct)", "n"] == 3            # la ligne sans réel est ignorée
+    assert s.loc["Modèle (journal, en direct)", "n"] == 3 # la ligne sans réel est ignorée
     assert s.loc["Modèle (journal, en direct)", "couverture intervalle %"] == pytest.approx(100.0)
 
 

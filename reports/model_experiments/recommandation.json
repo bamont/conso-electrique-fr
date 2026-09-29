@@ -1,0 +1,22 @@
+{
+  "profil": "standard",
+  "candidats": [
+    "mel_tous",
+    "mel_lgbm_mlp",
+    "mlp"
+  ],
+  "a_envisager": [
+    "mel_tous",
+    "mel_lgbm_mlp",
+    "mlp",
+    "mel_nnls"
+  ],
+  "poids_mel_nnls": {
+    "lgbm": 0.0861,
+    "hybride": 0.3923,
+    "catboost": 0.02,
+    "mlp": 0.5016,
+    "lisse": 0.0
+  },
+  "epoques_mlp": 23
+}

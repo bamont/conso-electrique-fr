@@ -34,7 +34,12 @@ DEFAULT_PARAMS = {
     "lambda_l2": 1.0, "verbose": -1, "seed": 0,
 }
 DEFAULT_ROUNDS = 1000
+DEFAULT_SEEDS = 3 # modèles moyennés pour la prévision ponctuelle (graines 0, 1, 2)
 QUANTILE_ROUNDS = 400
+
+# Mélange à poids appris (notebook 06, mel_nnls)
+DEFAULT_BLEND_WEIGHTS = {"lgbm": 0.086, "hybride": 0.392, "catboost": 0.02, "mlp": 0.502, "lisse": 0.0}
+DEFAULT_MLP_EPOCHS = 25
 
 # Intervalle conforme : groupes de température (température lissée, en °C)
 TEMP_GROUP_EDGES = (5.0, 15.0, 22.0)

@@ -13,10 +13,11 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir "poetry>=2,<3"
 
+ARG MODEL_GROUPS=main
+
 WORKDIR /app
 COPY pyproject.toml poetry.lock ./
-# uniquement les dépendances du groupe principal (pas de notebooks, pas de dev)
-RUN poetry install --only main --no-root --no-interaction
+RUN poetry install --only ${MODEL_GROUPS} --no-root --no-interaction
 
 COPY src ./src
 COPY models ./models

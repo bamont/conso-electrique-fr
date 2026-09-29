@@ -17,7 +17,7 @@ def test_weighted_national_ignores_missing_city():
     nat = weighted_national(_two_cities(), weights={"Paris": 3.0, "Lyon": 1.0})
     assert list(nat.columns) == WCOLS
     assert np.isclose(nat["temp_nat"].iloc[0], (3 * 10 + 20) / 4)
-    assert np.isclose(nat["temp_nat"].iloc[1], 11.0)              # Lyon manquante : seule Paris compte
+    assert np.isclose(nat["temp_nat"].iloc[1], 11.0) # Lyon manquante : seule Paris compte
 
 
 def test_hourly_bias_recovers_and_removes_bias():
@@ -31,7 +31,7 @@ def test_hourly_bias_recovers_and_removes_bias():
     assert len(b) == 24 and np.allclose(b.to_numpy(), 0.5 + 0.5 * np.cos(2 * np.pi * np.arange(24) / 24), atol=1e-9)
     fixed = apply_hourly_bias(fc, b)
     assert np.allclose(fixed["temp_nat"], 0.0, atol=1e-9)
-    assert (fixed["hum_nat"] == fc["hum_nat"]).all()              # seule la température est corrigée
+    assert (fixed["hum_nat"] == fc["hum_nat"]).all() # seule la température est corrigée
 
 
 def test_hourly_bias_needs_enough_points():
@@ -69,7 +69,7 @@ def test_fetch_openmeteo_retries_on_network_timeout(monkeypatch):
     monkeypatch.setattr("conso.weather.time.sleep", lambda s: None)
     sess = _FlakySession(fail_times=2)
     df = fetch_openmeteo("https://example.test", 48.8, 2.3, past_days=1, forecast_days=1, session=sess, max_retry=5)
-    assert sess.calls == 3 and len(df) == 3                     # 2 échecs réseau puis succès
+    assert sess.calls == 3 and len(df) == 3 # 2 échecs réseau puis succès
 
 
 def test_fetch_openmeteo_gives_up_after_max_retry(monkeypatch):

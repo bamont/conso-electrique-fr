@@ -72,6 +72,16 @@ def test_performance_tables(perf_data):
     assert list(ry.columns) == ["MAPE RTE J-1 (%)", "Biais RTE J-1 (MW)"] and 2021 in ry.index
 
 
+def test_cold_band_message():
+    by_t = pd.DataFrame({performance.LABELS["rte_j1"]: [1500.0], performance.LABELS["prod_fc_debiased"]: [1000.0]},
+                        index=[performance.TEMP_LABELS[0]])
+    assert "meilleur" in performance.cold_band_message(by_t)
+    by_t.loc[performance.TEMP_LABELS[0], performance.LABELS["prod_fc_debiased"]] = 1900.0
+    assert "moins bien" in performance.cold_band_message(by_t)
+    by_t.loc[performance.TEMP_LABELS[0], performance.LABELS["prod_fc_debiased"]] = 1520.0
+    assert "parité" in performance.cold_band_message(by_t)
+
+
 # Client HTTP
 class Resp:
     def __init__(self, status, payload=None, text=""):
@@ -106,7 +116,7 @@ def test_forecast_frame_is_local_time():
     payload = {"points": [{"time": "2024-03-31T01:30:00+01:00", "forecast_mw": 1.0, "lower_mw": 0.0, "upper_mw": 2.0},
                           {"time": "2024-03-31T03:00:00+02:00", "forecast_mw": 1.0, "lower_mw": 0.0, "upper_mw": 2.0}]}
     df = client.forecast_frame(payload)
-    assert str(df.index.tz) == "Europe/Paris" and df.index[1] - df.index[0] == pd.Timedelta("30min")   # saut d'heure d'été
+    assert str(df.index.tz) == "Europe/Paris" and df.index[1] - df.index[0] == pd.Timedelta("30min") # saut d'heure d'été
 
 
 # Pages Streamlit branchées sur la vraie API
@@ -175,6 +185,42 @@ def test_model_page(wired):
     at.sidebar.radio[0].set_value("Modèle").run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.metric[0].value == "test" and len(at.get("plotly_chart")) == 2
+    assert any(m.label == "Modèle ponctuel" and "LightGBM" in m.value for m in at.metric)
+    assert not any("Composition du mélange" in c.value for c in at.caption) # point_model="lgbm" : pas de mélange à afficher
+
+
+@pytest.fixture()
+def wired_blend(monkeypatch, dataset, wt_fc):
+    """Comme ``wired``, mais avec un bundle ``point_model=\"blend\"`` (mélange réduit pour rester rapide)."""
+    import streamlit as st
+
+    from conso.train import train_bundle
+
+    st.cache_data.clear()
+    bundle, _ = train_bundle(
+        dataset, wt_fc, train_start="2021-01-01", train_end=pd.Timestamp("2024-04-01", tz="Europe/Paris"),
+        rounds=20, q_rounds=20, params={"num_leaves": 15, "min_data_in_leaf": 50, "learning_rate": 0.2},
+        calib_months=6, bias_months=12, min_per_hour=50, version="test-blend", seeds=1,
+        point_model="blend", blend_weights={"lgbm": 0.6, "lisse": 0.4},
+    )
+    replay = ReplayProvider(dataset, wt_fc)
+    api = TestClient(create_app(bundle, replay, FixedLive(replay)))
+
+    def fake_get(url, params=None, timeout=None):
+        return api.get(url.replace(client.api_url(), ""), params=params)
+
+    monkeypatch.setattr(client.requests, "get", fake_get)
+    monkeypatch.setattr(client, "now_paris", lambda: pd.Timestamp("2024-03-19 14:00", tz="Europe/Paris"))
+    return monkeypatch
+
+
+def test_model_page_blend_shows_composition(wired_blend):
+    at = _run()
+    at.sidebar.radio[0].set_value("Modèle").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any(m.label == "Modèle ponctuel" and m.value == "Mélange (blend)" for m in at.metric)
+    texte = " ".join(c.value for c in at.caption)
+    assert "Composition du mélange" in texte and "lgbm" in texte and "lisse" in texte
 
 
 def test_performance_page(wired, perf_data, tmp_path):
@@ -227,9 +273,9 @@ def test_journal_page_with_data(wired, tmp_path):
     at = _run()
     at.sidebar.radio[0].set_value("Journal").run()
     assert not at.exception, [e.value for e in at.exception]
-    assert at.metric[0].value == "4"                      # 4 jours enregistrés au total
-    assert at.metric[1].value == "3"                      # dont 3 avec le réel connu
-    assert len(at.dataframe) == 2                         # le tableau des métriques + le journal détaillé (dans l'expander)
+    assert at.metric[0].value == "4" # 4 jours enregistrés au total
+    assert at.metric[1].value == "3" # dont 3 avec le réel connu
+    assert len(at.dataframe) == 2    # le tableau des métriques + le journal détaillé
     assert at.get("plotly_chart")
     assert any("RTE J-1" in c.value for c in at.caption)
 

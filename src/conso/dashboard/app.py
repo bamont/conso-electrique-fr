@@ -26,7 +26,7 @@ PAGES = ["Demain (live)", "Rejouer un jour", "Performance", "Journal", "Modèle"
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
-# Accès aux données (mises en cache)
+# Accès aux données
 @st.cache_data(ttl=600, show_spinner="Calcul de la prévision…")
 def cached_forecast(date: str, mode: str) -> dict:
     return client.get_json("/forecast", {"date": date, "mode": mode})
@@ -117,7 +117,7 @@ def page_replay() -> None:
     try:
         rng = cached_range()
     except client.ApiError as e:
-        if e.status == 404 and str(e) == "Not Found":          # route inconnue : image de l'API ancienne
+        if e.status == 404 and str(e) == "Not Found": # route inconnue : image de l'API ancienne
             st.error("L'API ne connaît pas la route `/replay/range` : son image est ancienne. "
                      "Reconstruis-la avec `docker compose up --build -d`.")
         elif e.status == 503:
@@ -179,11 +179,12 @@ def page_performance() -> None:
     right.plotly_chart(charts.bars_figure(by_slot, "MAE selon le créneau cible", "MW", performance.COLORS))
     st.plotly_chart(charts.lines_figure(rte_year[["MAPE RTE J-1 (%)"]], "Prévision RTE J-1 : MAPE par année", "%", {"MAPE RTE J-1 (%)": charts.RED}))
 
+    phrase_froid = performance.cold_band_message(by_temp)
     st.markdown(
         "**Comment lire ces résultats**\n"
         "- RTE J-1 a un **biais de −1 GW**, dont la cause est inconnue : une part de l'avantage en MAE vient de là. "
         "L'écart-type de l'erreur ne dépend pas de ce biais.\n"
-        "- **L'avantage se concentre hors de l'hiver** : sous 0 °C, le modèle est à parité avec RTE.\n"
+        f"- **Sous 0 °C** (température nationale), {phrase_froid} — voir le détail par tranche ci-dessus.\n"
         "- Les créneaux de 0 h à 9 h 30 supposent la consommation de la matinée de D connue (émission à 10 h).\n"
         "- La météo prévue vient d'un historique de prévisions à courte échéance : le coût d'une vraie prévision J-1 est probablement un peu supérieur."
     )
@@ -242,12 +243,19 @@ def page_model() -> None:
     except client.ApiError as e:
         show_error(e)
         return
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Version", str(model.get("version", "?")))
     c2.metric("Entraîné jusqu'au", str(model.get("train_end", "?"))[:10])
     c3.metric("Variables", model.get("n_features", "?"))
+    point_model = model.get("point_model", "lgbm")
+    c4.metric("Modèle ponctuel", "Mélange (blend)" if point_model == "blend" else f"LightGBM, {model.get('n_seeds', 1)} graine(s)")
     st.caption(f"Cible : {model.get('target', '?')} · Météo : {model.get('weather', '?')} · "
                f"Rejeu disponible : {'oui' if health.get('replay_available') else 'non'}")
+    if point_model == "blend" and model.get("blend_weights"):
+        poids = ", ".join(f"{k} {v:.2f}" for k, v in model["blend_weights"].items() if v)
+        st.caption(f"Composition du mélange (poids appris, notebook 06) : {poids}. "
+                   "Les modèles quantiles (intervalle de prévision) restent du LightGBM à une seule graine "
+                   "dans tous les cas, `point_model` ne les concerne pas.")
     left, right = st.columns(2)
     if model.get("bias_hourly_c"):
         left.plotly_chart(charts.hourly_bias_figure({int(h): v for h, v in model["bias_hourly_c"].items()}))

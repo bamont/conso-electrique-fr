@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Nettoie les notebooks avant de les versionner.
 
-- anonymise les chemins personnels présents dans les sorties (``C:\\Users\\alice\\...`` -> ``C:\\Users\\<user>\\...``,
-  ``/home/alice/...`` -> ``/home/<user>/...``) ;
+- anonymise les chemins personnels présents dans les sorties;
 - option ``--strip-outputs`` : supprime toutes les sorties et les compteurs d'exécution ;
 - option ``--check`` : ne modifie rien, échoue (code 1) s'il reste un chemin personnel ou un fichier > 5 Mo.
 

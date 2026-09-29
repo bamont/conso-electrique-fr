@@ -1,0 +1,5 @@
+modèle,gain oracle %,verdict oracle,gain fc_debiased %,verdict fc_debiased,à envisager
+mel_tous,13.511200326814466,✅,12.99950532916275,✅,True
+mel_lgbm_mlp,11.815593067484704,✅,11.14100609136899,✅,True
+mlp,10.83157361778356,✅,9.473152282075073,✅,True
+mel_nnls,15.35617668878595,✅,14.727412098097458,✅,True

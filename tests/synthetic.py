@@ -50,7 +50,7 @@ def make_city_forecast(df: pd.DataFrame, start: str = "2022-01-01", seed: int = 
     rng = np.random.default_rng(seed)
     hourly = df[WCOLS].resample("1h").mean().loc[start:]
     hours = hourly.index.tz_convert(TZ).hour.to_numpy()
-    bias = 0.7 + 0.4 * np.cos(2 * np.pi * (hours - 22) / 24)          # ~ +1,1 °C la nuit, ~ +0,3 °C à midi
+    bias = 0.7 + 0.4 * np.cos(2 * np.pi * (hours - 22) / 24) # ~ +1,1 °C la nuit, ~ +0,3 °C à midi
     frames = []
     for i, city in enumerate(CITY_WEIGHTS):
         f = pd.DataFrame(index=hourly.index)

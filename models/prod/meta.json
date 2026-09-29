@@ -1,5 +1,5 @@
 {
-  "version": "20260920-2213",
+  "version": "20260927-1540",
   "features": [
     "heure",
     "jour_semaine",
@@ -39,7 +39,23 @@
     "lag2_pont",
     "lag7_ferie",
     "lag7_pont",
-    "dev_matin"
+    "dev_matin",
+    "dtemp_24h",
+    "dtemp_48h",
+    "dTj_1j",
+    "dTj_3j",
+    "te_lent",
+    "te_moyen",
+    "te_rapide",
+    "dT_te_lent",
+    "tmin_3j",
+    "serie_froid_0",
+    "serie_froid_5",
+    "y_last_rel",
+    "pente_matin_dev",
+    "dev_recent_3h",
+    "dev_matin_j1",
+    "dtemp_matin"
   ],
   "train_start": "2013-01-01",
   "train_end": "2026-06-30 22:00:00+00:00",
@@ -50,6 +66,9 @@
   "alpha": 0.1,
   "rounds": 1000,
   "quantile_rounds": 400,
+  "n_seeds": 3,
+  "point_model": "lgbm",
+  "blend_weights": null,
   "half_life_years": null,
   "params": {
     "objective": "regression",
@@ -67,6 +86,7 @@
   "target": "conso - level7 (moyenne des 7 jours complets T-8 ... T-2)",
   "issue_hour_local": 10,
   "weather": "entraîné sur météo observée ; servi avec météo prévue débiaisée par heure",
+  "point_kind": "lgbm",
   "bias_hourly": {
     "0": 1.1436431218297238,
     "1": 1.0967928955441484,
@@ -94,9 +114,9 @@
     "23": 1.167784375664429
   },
   "qhat": {
-    "froid": 1730.8230210407564,
-    "doux": 620.2349041206471,
-    "chaud": 563.3317323330339,
-    "tres_chaud": 609.5978834209309
+    "froid": 1595.90448371011,
+    "doux": 580.3598408159596,
+    "chaud": 540.1904783267164,
+    "tres_chaud": 690.5474445619911
   }
 }

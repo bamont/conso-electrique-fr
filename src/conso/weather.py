@@ -13,9 +13,6 @@ from .timeutils import mask_between
 
 def weighted_national(meteo: pd.DataFrame, weights: dict | None = None) -> pd.DataFrame:
     """Moyenne pondérée par la population, heure par heure.
-
-    ``meteo`` : une ligne par (heure, ville), colonne ``city`` + variables Open-Meteo (``HOURLY``).
-    Le poids d'une ville est ignoré pour les heures où sa valeur est manquante.
     """
     w_map = pd.Series(CITY_WEIGHTS if weights is None else weights)
     m = meteo.copy()
@@ -59,8 +56,7 @@ def fetch_openmeteo(
     variables: list[str] | None = None, past_days: int | None = None, forecast_days: int | None = None,
     session=None, max_retry: int = 6,
 ) -> pd.DataFrame:
-    """Télécharge des données horaires Open-Meteo (UTC). Réessaie sur limite de débit (429) ou incident réseau
-    transitoire (timeout, coupure de connexion) : ces derniers sont fréquents et sans rapport avec les données."""
+    """Télécharge des données horaires Open-Meteo (UTC)."""
     variables = variables or HOURLY
     params = {"latitude": lat, "longitude": lon, "hourly": ",".join(variables), "timezone": "UTC"}
     if start and end:
@@ -74,7 +70,7 @@ def fetch_openmeteo(
     for attempt in range(max_retry):
         try:
             r = get(url, params=params, timeout=90)
-        except requests.exceptions.RequestException as e:      # timeout, DNS, connexion coupée...
+        except requests.exceptions.RequestException as e: # timeout, DNS, connexion coupée...
             last_error = e
             time.sleep(10 * (attempt + 1))
             continue

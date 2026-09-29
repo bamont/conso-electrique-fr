@@ -2,13 +2,6 @@
 
     python -m conso.train --dataset data/processed/dataset_30min.parquet \\
         --meteo-fc data/raw/meteo_forecast_openmeteo.parquet --out models/prod
-
-Procédure :
-1. Le modèle ponctuel est entraîné sur la météo **observée**, depuis ``train_start`` jusqu'à ``train_end``.
-2. Les modèles quantiles (5 % / 95 %) sont entraînés avant la fenêtre de calibration ; les scores de
-   non-conformité sont mesurés sur les ``calib_months`` derniers mois avec la **météo prévue débiaisée**
-   (biais estimé uniquement avant cette fenêtre), puis regroupés par régime de température.
-3. Le biais horaire de la température prévue de production est estimé sur les ``bias_months`` derniers mois.
 """
 
 from __future__ import annotations
@@ -18,10 +11,20 @@ import datetime as dt
 
 import pandas as pd
 
-from .config import DEFAULT_PARAMS, DEFAULT_ROUNDS, FC_START, GAP_DAYS, QUANTILE_ROUNDS, TZ, WCOLS
+from .config import (
+    DEFAULT_MLP_EPOCHS,
+    DEFAULT_PARAMS,
+    DEFAULT_ROUNDS,
+    DEFAULT_SEEDS,
+    FC_START,
+    GAP_DAYS,
+    QUANTILE_ROUNDS,
+    TZ,
+    WCOLS,
+)
 from .data import consolidated_end, load_dataset, load_national_forecast
 from .features import FEATURE_COLUMNS, build_features
-from .model import Bundle, conformal_qhat, fit_lgb, predict_level, save_bundle, temp_groups
+from .model import Bundle, conformal_qhat, fit_lgb, fit_lgb_seeds, predict_level, save_bundle, temp_groups
 from .timeutils import mask_between
 from .weather import apply_hourly_bias, hourly_bias
 
@@ -30,7 +33,8 @@ def train_bundle(
     df: pd.DataFrame, wt_fc: pd.DataFrame, train_start: str = "2013-01-01", train_end: pd.Timestamp | None = None,
     rounds: int = DEFAULT_ROUNDS, q_rounds: int = QUANTILE_ROUNDS, params: dict | None = None,
     calib_months: int = 12, bias_months: int = 24, alpha: float = 0.10, half_life: float | None = None,
-    min_per_hour: int = 100, version: str | None = None,
+    min_per_hour: int = 100, version: str | None = None, seeds: int = DEFAULT_SEEDS,
+    point_model: str = "lgbm", blend_weights: dict[str, float] | None = None, mlp_epochs: int = DEFAULT_MLP_EPOCHS,
 ) -> tuple[Bundle, dict]:
     """Entraîne le modèle de production. Renvoie le bundle et des diagnostics de calibration."""
     y = df["conso"]
@@ -44,7 +48,7 @@ def train_bundle(
 
     X_obs = build_features(df, wt_obs)
 
-    # 1) modèles quantiles avant la fenêtre de calibration, scores sur la fenêtre (météo prévue débiaisée)
+    # Modèles quantiles avant la fenêtre de calibration, scores sur la fenêtre (météo prévue débiaisée)
     bias_cal = hourly_bias(wt_fc, wt_obs, fc0, cal_start - pd.Timedelta(days=GAP_DAYS), min_per_hour)
     X_cal = build_features(df, apply_hourly_bias(wt_fc, bias_cal))
     tm_q = mask_between(X_obs.index, t0, cal_start - pd.Timedelta(days=GAP_DAYS))
@@ -62,15 +66,25 @@ def train_bundle(
     qhat = conformal_qhat(scores, groups, alpha)
     inside_raw = ((y.loc[Xc.index] >= lo) & (y.loc[Xc.index] <= hi)).mean()
 
-    # 2) biais horaire de production (mois récents) et modèle ponctuel sur toutes les données
+    # Biais horaire de production (mois récents) et modèle ponctuel sur toutes les données
     bias_prod = hourly_bias(wt_fc, wt_obs, train_end - pd.DateOffset(months=bias_months), train_end, min_per_hour)
-    point = fit_lgb(X_obs, y, mask_between(X_obs.index, t0, train_end), rounds, params, half_life, train_end)
+    tm_point = mask_between(X_obs.index, t0, train_end)
+    if point_model == "lgbm":
+        point = fit_lgb_seeds(X_obs, y, tm_point, rounds, params, half_life, train_end, n_seeds=seeds)
+    elif point_model == "blend":
+        from .models_alt import fit_blend
+
+        point = fit_blend(X_obs, y, tm_point, train_end, FEATURE_COLUMNS, blend_weights, seeds, rounds, mlp_epochs)
+    else:
+        raise ValueError(f"point_model inconnu : {point_model!r} (attendu : 'lgbm' ou 'blend')")
 
     meta = {
         "version": version or dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M"),
         "features": FEATURE_COLUMNS, "train_start": train_start, "train_end": str(train_end),
         "calibration_window": [str(cal_start), str(train_end)], "alpha": alpha, "rounds": rounds,
-        "quantile_rounds": q_rounds, "half_life_years": half_life, "params": {**DEFAULT_PARAMS, **(params or {})},
+        "quantile_rounds": q_rounds, "n_seeds": seeds, "point_model": point_model,
+        "blend_weights": blend_weights if point_model == "blend" else None,
+        "half_life_years": half_life, "params": {**DEFAULT_PARAMS, **(params or {})},
         "target": "conso - level7 (moyenne des 7 jours complets T-8 ... T-2)", "issue_hour_local": 10,
         "weather": "entraîné sur météo observée ; servi avec météo prévue débiaisée par heure",
     }
@@ -85,11 +99,14 @@ def main() -> None:  # pragma: no cover - point d'entrée en ligne de commande
     p.add_argument("--out", default="models/prod")
     p.add_argument("--train-start", default="2013-01-01")
     p.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
+    p.add_argument("--seeds", type=int, default=DEFAULT_SEEDS)
+    p.add_argument("--point-model", choices=["lgbm", "blend"], default="lgbm",
+                    help="'blend' entraîne le mélange à poids appris du notebook 06 (coûte environ 10x plus cher, dominé par le réseau de neurones)")
     args = p.parse_args()
 
     df = load_dataset(args.dataset)
     wt_fc = load_national_forecast(args.meteo_fc, df.index)
-    bundle, diag = train_bundle(df, wt_fc, train_start=args.train_start, rounds=args.rounds)
+    bundle, diag = train_bundle(df, wt_fc, train_start=args.train_start, rounds=args.rounds, seeds=args.seeds, point_model=args.point_model)
     save_bundle(bundle, args.out)
     print(f"✔ modèle enregistré dans {args.out} (version {bundle.meta['version']})")
     print(f"  couverture de l'intervalle brut sur la fenêtre de calibration : {diag['coverage_before_calibration']:.1%}")

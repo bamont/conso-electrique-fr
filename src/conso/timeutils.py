@@ -10,9 +10,6 @@ from .config import TZ
 
 def shift_local(s: pd.Series, days: int) -> pd.Series:
     """Valeur de ``s`` à (t_local - ``days`` jours), indexée sur l'index de ``s`` (UTC).
-
-    Le décalage se fait en heure d'horloge : le lundi 8 h est comparé au lundi 8 h précédent,
-    même si un changement d'heure a eu lieu entre-temps.
     """
     loc = s.index.tz_convert(TZ).tz_localize(None)
     src = (loc - pd.Timedelta(days=days)).tz_localize(TZ, ambiguous="NaT", nonexistent="shift_forward")

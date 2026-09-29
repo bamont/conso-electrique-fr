@@ -76,10 +76,10 @@ def test_forecast_dst_day_has_46_points(client):
 
 
 def test_forecast_errors(client):
-    assert client.get("/forecast", params={"date": "2019-01-01"}).status_code == 404       # hors couverture
-    assert client.get("/forecast", params={"date": "2021-01-10"}).status_code == 404       # moins de 45 jours d'historique
-    assert client.get("/forecast", params={"date": "2021-12-15"}).status_code == 404       # avant les prévisions météo (2022)
-    assert client.get("/forecast", params={"date": "20-03-2024"}).status_code == 422       # format invalide
+    assert client.get("/forecast", params={"date": "2019-01-01"}).status_code == 404 # hors couverture
+    assert client.get("/forecast", params={"date": "2021-01-10"}).status_code == 404 # moins de 45 jours d'historique
+    assert client.get("/forecast", params={"date": "2021-12-15"}).status_code == 404 # avant les prévisions météo (2022)
+    assert client.get("/forecast", params={"date": "20-03-2024"}).status_code == 422 # format invalide
     assert client.get("/forecast", params={"date": "2024-03-20", "mode": "autre"}).status_code == 422
 
 
@@ -125,7 +125,6 @@ class FakeResponse:
 
 class FakeSession:
     """Simule les sources externes : export RTE (CSV) et Open-Meteo (JSON horaire)."""
-
     def __init__(self, now):
         self.now = now
 

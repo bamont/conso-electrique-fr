@@ -81,3 +81,15 @@ def rte_by_year(df: pd.DataFrame) -> pd.DataFrame:
     year = D.index.tz_convert(TZ).year
     return pd.DataFrame({"MAPE RTE J-1 (%)": (e.abs() / D["y"] * 100).groupby(year).mean(),
                          "Biais RTE J-1 (MW)": e.groupby(year).mean()})
+
+
+def cold_band_message(by_temp: pd.DataFrame, seuil: float = 0.05) -> str:
+    """Phrase comparant le modèle à RTE J-1 sous 0 °C, calculée depuis ``mae_by_temperature``."""
+    froid = TEMP_LABELS[0]  # "< 0"
+    mod, rte = by_temp.loc[froid, LABELS["prod_fc_debiased"]], by_temp.loc[froid, LABELS["rte_j1"]]
+    ecart = mod / rte - 1
+    if ecart <= -seuil:
+        return f"le modèle reste meilleur que RTE ({ecart:+.0%})"
+    if ecart >= seuil:
+        return f"le modèle fait moins bien que RTE ({ecart:+.0%})"
+    return "le modèle est à peu près à parité avec RTE"

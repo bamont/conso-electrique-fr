@@ -1,9 +1,5 @@
-"""Journal des prévisions réelles : enregistre chaque jour la prévision faite en direct
-(avant de connaître le résultat), puis la complète avec le réel et la prévision RTE J-1
-une fois qu'ils sont publiés.
-
-C'est la seule validation qui ne peut pas être ajustée après coup : contrairement à un backtest,
-la prévision est écrite dans le journal avant que le réel n'existe.
+"""Journal des prévisions réelles : enregistre chaque jour la prévision faite en direct, 
+puis la complète avec le réel et la prévision RTE J-1 une fois qu'ils sont publiés.
 
     python -m conso.journal record     --model models/prod --out journal
     python -m conso.journal reconcile  --out journal
@@ -11,7 +7,7 @@ la prévision est écrite dans le journal avant que le réel n'existe.
 
 Stockage : un fichier parquet par mois cible (``journal/forecasts_2026-03.parquet``), chaque ligne
 étant une demi-heure prévue. Rejouer ``record`` deux fois pour le même jour remplace l'entrée
-précédente (par exemple si la tâche planifiée est relancée manuellement).
+précédente.
 """
 
 from __future__ import annotations
@@ -87,7 +83,7 @@ def record_day(bundle: Bundle, provider: LiveProvider, target_date, out_dir: str
     month = fc.index[0].tz_convert(TZ).tz_localize(None).to_period("M")
     current = _load_month(out_dir, month)
     prev = current[current["date"] == rows["date"].iloc[0]]
-    if not prev.empty:                                    # conserve un éventuel réel déjà rapproché
+    if not prev.empty: # conserve un éventuel réel déjà rapproché
         rows = rows.merge(prev[["time", "actual_mw", "rte_j1_mw"]], on="time", how="left", suffixes=("", "_prev"))
         rows["actual_mw"] = rows["actual_mw_prev"].combine_first(rows["actual_mw"])
         rows["rte_j1_mw"] = rows["rte_j1_mw_prev"].combine_first(rows["rte_j1_mw"])
@@ -140,17 +136,17 @@ def summary(df: pd.DataFrame) -> pd.DataFrame:
     if done.empty:
         return pd.DataFrame(columns=["MAE", "RMSE", "MAPE %", "biais", "MASE", "n"])
     y = done["actual_mw"]
-    scale = float((y - y).abs().mean()) or 1.0            # pas de référence naïve dans le journal seul
+    scale = float((y - y).abs().mean()) or 1.0 # pas de référence naïve dans le journal seul
     rows = {"Modèle (journal, en direct)": compute_metrics(y, done["forecast_mw"], scale)}
     if done["rte_j1_mw"].notna().any():
         rows["RTE J-1"] = compute_metrics(y, done["rte_j1_mw"], scale)
-    out = pd.DataFrame(rows).T.drop(columns=["MASE"])     # MASE sans intérêt ici : pas de dénominateur externe
+    out = pd.DataFrame(rows).T.drop(columns=["MASE"]) # MASE sans intérêt ici : pas de dénominateur externe
     inside = (y >= done["lower_mw"]) & (y <= done["upper_mw"])
     out.loc["Modèle (journal, en direct)", "couverture intervalle %"] = inside.mean() * 100
     return out
 
 
-# ----------------------------------------------------------------------------- ligne de commande
+# Ligne de commande
 def _cli_record(args: argparse.Namespace) -> None:
     bundle = load_bundle(args.model)
     target = pd.Timestamp(args.date) if args.date else pd.Timestamp.now(tz=TZ).normalize() + pd.Timedelta(days=1)
@@ -199,5 +195,5 @@ def main() -> None:  # pragma: no cover - point d'entrée en ligne de commande
     args.func(args)
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__": # pragma: no cover
     main()

@@ -1,7 +1,7 @@
 """Modèle LightGBM : entraînement, intervalle conforme, sauvegarde et chargement.
 
 La cible n'est pas la consommation brute mais son écart au niveau récent ``level7``
-(moyenne des 7 jours complets T-8 ... T-2) : la baisse tendancielle du niveau est ainsi absorbée.
+(moyenne des 7 jours complets T-8 ... T-2).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from .config import DEFAULT_PARAMS, TEMP_GROUP_EDGES, TEMP_GROUP_NAMES
+from .config import DEFAULT_PARAMS, DEFAULT_SEEDS, TEMP_GROUP_EDGES, TEMP_GROUP_NAMES
 from .features import FEATURE_COLUMNS
 
 
@@ -41,7 +41,28 @@ def fit_lgb(
     return lgb.train({**DEFAULT_PARAMS, **(params or {})}, ds, num_boost_round=rounds)
 
 
-def predict_level(model: lgb.Booster, X: pd.DataFrame, feats: list[str] | None = None) -> pd.Series:
+class SeedEnsemble:
+    """Moyenne de modèles entraînés avec des graines différentes : mêmes données, moins de variance."""
+
+    def __init__(self, models: list[lgb.Booster]):
+        self.models = list(models)
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return np.mean([m.predict(X) for m in self.models], axis=0)
+
+
+def fit_lgb_seeds(
+    X: pd.DataFrame, y: pd.Series, mask: np.ndarray, rounds: int, params: dict | None = None,
+    half_life: float | None = None, ref_end: pd.Timestamp | None = None, feats: list[str] | None = None,
+    n_seeds: int = DEFAULT_SEEDS,
+) -> lgb.Booster | SeedEnsemble:
+    """Entraîne ``n_seeds`` modèles (graines ``seed``, ``seed + 1``, ...) et renvoie leur moyenne."""
+    base = (params or {}).get("seed", DEFAULT_PARAMS["seed"])
+    models = [fit_lgb(X, y, mask, rounds, {**(params or {}), "seed": base + i}, half_life, ref_end, feats) for i in range(n_seeds)]
+    return models[0] if n_seeds == 1 else SeedEnsemble(models)
+
+
+def predict_level(model: lgb.Booster | SeedEnsemble, X: pd.DataFrame, feats: list[str] | None = None) -> pd.Series:
     """Prévision en MW : niveau récent + écart prédit. NaN sans météo cible."""
     feats = feats or FEATURE_COLUMNS
     p = pd.Series(model.predict(X[feats]), index=X.index) + X["level7"]
@@ -76,7 +97,7 @@ def conformal_qhat(scores: pd.Series, groups: pd.Series, alpha: float = 0.10, mi
 class Bundle:
     """Tout ce qu'il faut pour prévoir : modèles, biais météo horaire, calibration, métadonnées."""
 
-    point: lgb.Booster
+    point: lgb.Booster | SeedEnsemble | object  # ou un conso.models_alt.Blend
     q_lo: lgb.Booster
     q_hi: lgb.Booster
     bias: pd.Series
@@ -101,12 +122,28 @@ def predict_with_interval(bundle: Bundle, X: pd.DataFrame) -> pd.DataFrame:
 
 
 def save_bundle(bundle: Bundle, out_dir: str | Path) -> Path:
+    """Sauvegarde le bundle. Le modèle ponctuel peut être un ``lgb.Booster``, un ``SeedEnsemble``
+    (format historique, ``point.txt`` ou ``point_seedN.txt``) ou un ``conso.models_alt.Blend``
+    (``point_kind`` = ``"blend"`` dans les métadonnées, un sous-dossier par membre du mélange)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    bundle.point.save_model(str(out / "point.txt"))
+    from .models_alt import Blend  # import tardif : ne pas imposer sklearn/torch/catboost au cas lgbm seul
+
+    if isinstance(bundle.point, Blend):
+        bundle.point.save(out / "point")
+        point_kind, n_seeds = "blend", 1
+    else:
+        n_seeds = len(bundle.point.models) if isinstance(bundle.point, SeedEnsemble) else 1
+        if n_seeds > 1:
+            for i, m in enumerate(bundle.point.models):
+                m.save_model(str(out / f"point_seed{i}.txt"))
+        else:
+            bundle.point.save_model(str(out / "point.txt"))
+        point_kind = "lgbm"
     bundle.q_lo.save_model(str(out / "q05.txt"))
     bundle.q_hi.save_model(str(out / "q95.txt"))
-    meta = {**bundle.meta, "bias_hourly": {int(h): float(v) for h, v in bundle.bias.items()}, "qhat": bundle.qhat}
+    meta = {**bundle.meta, "point_kind": point_kind, "n_seeds": n_seeds,
+            "bias_hourly": {int(h): float(v) for h, v in bundle.bias.items()}, "qhat": bundle.qhat}
     (out / "meta.json").write_text(json.dumps(meta, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
     return out
 
@@ -116,8 +153,17 @@ def load_bundle(model_dir: str | Path) -> Bundle:
     meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
     bias = pd.Series({int(h): v for h, v in meta.pop("bias_hourly").items()}).sort_index()
     qhat = meta.pop("qhat")
+    point_kind = meta.get("point_kind", "lgbm")  # absent = bundle sauvé avant le mélange (format historique)
+    if point_kind == "blend":
+        from .models_alt import Blend
+
+        point = Blend.load(d / "point")
+    else:
+        n_seeds = int(meta.get("n_seeds", 1))
+        point = (SeedEnsemble([lgb.Booster(model_file=str(d / f"point_seed{i}.txt")) for i in range(n_seeds)])
+                 if n_seeds > 1 else lgb.Booster(model_file=str(d / "point.txt")))
     return Bundle(
-        point=lgb.Booster(model_file=str(d / "point.txt")),
+        point=point,
         q_lo=lgb.Booster(model_file=str(d / "q05.txt")),
         q_hi=lgb.Booster(model_file=str(d / "q95.txt")),
         bias=bias, qhat=qhat, meta=meta,

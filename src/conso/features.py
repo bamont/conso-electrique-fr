@@ -1,7 +1,7 @@
 """Construction des variables du modèle.
 
 Toutes les variables d'un jour cible T n'utilisent que des informations disponibles à l'émission
-(jour D = T-1, à 10 h) : le test ``tests/test_features.py::test_no_leakage`` le vérifie.
+(jour D = T-1, à 10 h).
 
 Deux jeux de météo interviennent :
 - ``wt`` : météo au moment cible (observée en mode « oracle », prévue en exploitation) ;
@@ -16,7 +16,7 @@ import pandas as pd
 from .config import HISTORY_DAYS, ISSUE_HOUR, TZ, WCOLS
 from .timeutils import local_days, shift_local
 
-FEATURE_COLUMNS = [
+BASE_COLUMNS = [
     "heure", "jour_semaine", "mois", "jour_annee", "is_holiday", "is_bridge",
     "vac_A", "vac_B", "vac_C", "n_zones_vac", "veille_ferie", "lendemain_ferie",
     "temp_nat", "hum_nat", "wind_nat", "cloud_nat", "rad_nat", "temp_l3h", "temp_l6h",
@@ -25,14 +25,75 @@ FEATURE_COLUMNS = [
     "lag2_ferie", "lag2_pont", "lag7_ferie", "lag7_pont", "dev_matin",
 ]
 
+DYN_COLUMNS = [
+    "dtemp_24h", "dtemp_48h", "dTj_1j", "dTj_3j", "te_lent", "te_moyen", "te_rapide", "dT_te_lent",
+    "tmin_3j", "serie_froid_0", "serie_froid_5",
+]
+NOWCAST_COLUMNS = ["y_last_rel", "pente_matin_dev", "dev_recent_3h", "dev_matin_j1", "dtemp_matin"]
+FEATURE_COLUMNS = [*BASE_COLUMNS, *DYN_COLUMNS, *NOWCAST_COLUMNS]
+
 REQUIRED_COLUMNS = ["conso", "is_holiday", "is_bridge", "vac_A", "vac_B", "vac_C", "n_zones_vac", *WCOLS]
+
+
+def _dynamique(d, wt, day, to_rows, dm, do) -> pd.DataFrame:
+    """Dynamique thermique : moyennes exponentielles multi-échelles, variations et séries de jours froids.
+
+    ``dm`` : température moyenne journalière au moment cible (prévue en exploitation) ;
+    ``do`` : température moyenne journalière observée. Le jour T et le jour D viennent de ``dm``,
+    les jours antérieurs de ``do``.
+    """
+    t = wt["temp_nat"]
+    o = pd.DataFrame(index=d.index)
+    o["dtemp_24h"] = t - shift_local(t, 1)
+    o["dtemp_48h"] = t - shift_local(d["temp_nat"], 2)
+    p1, p2, p3 = dm.shift(1), do.shift(2), do.shift(3)
+    o["dTj_1j"] = to_rows(dm - p1)
+    o["dTj_3j"] = to_rows(dm - (p1 + p2 + p3) / 3)
+    for alpha, nom in ((0.15, "lent"), (0.35, "moyen"), (0.7, "rapide")):
+        ew = do.ewm(alpha=alpha, adjust=False).mean().where(do.notna())
+        etat_d = alpha * dm.shift(1) + (1 - alpha) * ew.shift(2)
+        o[f"te_{nom}"] = to_rows(alpha * dm + (1 - alpha) * etat_d)
+    o["dT_te_lent"] = t - o["te_lent"]
+    mn_cible = t.groupby(day).min().asfreq("D")
+    mn_obs = d["temp_nat"].groupby(day).min().asfreq("D")
+    o["tmin_3j"] = to_rows(pd.concat([mn_cible, mn_cible.shift(1), mn_obs.shift(2)], axis=1).min(axis=1, skipna=False))
+    for seuil in (0, 5):
+        froid = (do < seuil).astype(int)
+        serie_obs = froid.groupby((1 - froid).cumsum()).cumsum().where(do.notna())
+        s_t = (dm < seuil).astype(float).where(dm.notna())
+        s_d = (dm.shift(1) < seuil).astype(float).where(dm.shift(1).notna())
+        o[f"serie_froid_{seuil}"] = to_rows(s_t * (1 + s_d * (1 + serie_obs.shift(2).fillna(0))))
+    return o
+
+
+def _nowcast(d, day, hh, early, to_rows, level7) -> pd.DataFrame:
+    """Informations de la matinée du jour D (avant l'heure d'émission) sur le comportement du jour T."""
+    y_ = d["conso"]
+
+    def creneau(h: float) -> pd.Series:
+        k = np.isclose(hh, h)
+        return y_[k].groupby(day[k]).first().asfreq("D")
+
+    y_fin, y_debut = creneau(ISSUE_HOUR - 0.5), creneau(ISSUE_HOUR - 2.5)
+    o = pd.DataFrame(index=d.index)
+    o["y_last_rel"] = to_rows(y_fin.shift(1)) - level7
+    pente = y_fin - y_debut
+    o["pente_matin_dev"] = to_rows((pente - pente.shift(7)).shift(1))
+    rec = (hh >= ISSUE_HOUR - 3) & early
+    m_rec = y_[rec].groupby(day[rec]).mean().asfreq("D")
+    o["dev_recent_3h"] = to_rows((m_rec - m_rec.shift(7)).shift(1))
+    m_early = y_[early].groupby(day[early]).mean().asfreq("D")
+    o["dev_matin_j1"] = to_rows((m_early - m_early.shift(1)).shift(1))
+    t_early = d["temp_nat"][early].groupby(day[early]).mean().asfreq("D")
+    o["dtemp_matin"] = to_rows((t_early - t_early.shift(7)).shift(1))
+    return o
 
 
 def build_features(d: pd.DataFrame, wt: pd.DataFrame) -> pd.DataFrame:
     """Variables pour toutes les lignes de ``d`` (index UTC, pas de 30 min régulier).
 
     Renvoie les colonnes de ``FEATURE_COLUMNS`` plus ``level7`` (base de la cible : moyenne des
-    7 jours complets T-8 ... T-2), qui n'est pas une variable du modèle.
+    7 jours complets T-8 à T-2).
     """
     missing = [c for c in REQUIRED_COLUMNS if c not in d.columns]
     if missing:
@@ -97,6 +158,7 @@ def build_features(d: pd.DataFrame, wt: pd.DataFrame) -> pd.DataFrame:
     m_early = y_[early].groupby(day[early]).mean().asfreq("D")
     X["dev_matin"] = to_rows((m_early - m_early.shift(7)).shift(1))
 
+    X = pd.concat([X, _dynamique(d, wt, day, to_rows, dt_tgt, dt_obs), _nowcast(d, day, hh, early, to_rows, level7)], axis=1)
     return X[[*FEATURE_COLUMNS, "level7"]]
 
 
